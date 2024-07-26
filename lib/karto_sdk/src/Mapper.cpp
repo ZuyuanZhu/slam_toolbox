@@ -1499,6 +1499,11 @@ void MapperGraph::AddEdges(LocalizedRangeScan * pScan, const Matrix3 & rCovarian
 
 kt_bool MapperGraph::TryCloseLoop(LocalizedRangeScan * pScan, const Name & rSensorName)
 {
+  std::cout << "Attempting loop closure for scan with sensor: " << rSensorName << std::endl;
+  std::cout << "Current scan pose before loop closure: X: " << pScan->GetCorrectedPose().GetX()
+            << ", Y: " << pScan->GetCorrectedPose().GetY()
+            << ", Heading: " << pScan->GetCorrectedPose().GetHeading() << std::endl;
+
   kt_bool loopClosed = false;
 
   kt_int32u scanIndex = 0;
@@ -1520,6 +1525,15 @@ kt_bool MapperGraph::TryCloseLoop(LocalizedRangeScan * pScan, const Name & rSens
 
     m_pMapper->FireLoopClosureCheck(stream.str());
 
+        // Print loop closure parameters and actual values
+    std::cout << "Loop Closure Parameters and Actual Values:" << std::endl;
+    std::cout << "  Coarse Response: " << coarseResponse << std::endl;
+    std::cout << "  Minimum Coarse Response Threshold: " << m_pMapper->m_pLoopMatchMinimumResponseCoarse->GetValue() << std::endl;
+    std::cout << "  Covariance(0,0): " << covariance(0, 0) << std::endl;
+    std::cout << "  Covariance(1,1): " << covariance(1, 1) << std::endl;
+    std::cout << "  Maximum Variance Threshold: " << m_pMapper->m_pLoopMatchMaximumVarianceCoarse->GetValue() << std::endl;
+
+
     if ((coarseResponse > m_pMapper->m_pLoopMatchMinimumResponseCoarse->GetValue()) &&
       (covariance(0, 0) < m_pMapper->m_pLoopMatchMaximumVarianceCoarse->GetValue()) &&
       (covariance(1, 1) < m_pMapper->m_pLoopMatchMaximumVarianceCoarse->GetValue()))
@@ -1539,6 +1553,11 @@ kt_bool MapperGraph::TryCloseLoop(LocalizedRangeScan * pScan, const Name & rSens
         m_pMapper->m_pLoopMatchMinimumResponseFine->GetValue() << ")" << std::endl;
       m_pMapper->FireLoopClosureCheck(stream1.str());
 
+            // Print fine response parameters and actual values
+      std::cout << "  Fine Response: " << fineResponse << std::endl;
+      std::cout << "  Minimum Fine Response Threshold: " << m_pMapper->m_pLoopMatchMinimumResponseFine->GetValue() << std::endl;
+
+
       if (fineResponse < m_pMapper->m_pLoopMatchMinimumResponseFine->GetValue()) {
         m_pMapper->FireLoopClosureCheck("REJECTED!");
       } else {
@@ -1555,6 +1574,20 @@ kt_bool MapperGraph::TryCloseLoop(LocalizedRangeScan * pScan, const Name & rSens
     }
 
     candidateChain = FindPossibleLoopClosure(pScan, rSensorName, scanIndex);
+  }
+
+    // After loop closure logic
+  if (loopClosed)
+  {
+    std::cout << "Loop closure successful. Updated scan pose: X: " << pScan->GetCorrectedPose().GetX()
+              << ", Y: " << pScan->GetCorrectedPose().GetY()
+              << ", Heading: " << pScan->GetCorrectedPose().GetHeading() << std::endl;
+  }
+  else
+  {
+    std::cout << "Loop closure not successful. Scan pose remains: X: " << pScan->GetCorrectedPose().GetX()
+              << ", Y: " << pScan->GetCorrectedPose().GetY()
+              << ", Heading: " << pScan->GetCorrectedPose().GetHeading() << std::endl;
   }
 
   return loopClosed;
@@ -2676,17 +2709,19 @@ kt_bool Mapper::Process(Object *  /*pObject*/)  // NOLINT
   return true;
 }
 
-kt_bool Mapper::Process(LocalizedRangeScan * pScan, Matrix3 * covariance)
+kt_bool Mapper::Process(LocalizedRangeScan * pScan, Matrix3 * covariance)  //debug
 {
   if (pScan != NULL) {
     karto::LaserRangeFinder * pLaserRangeFinder = pScan->GetLaserRangeFinder();
 
     // validate scan
     if (pLaserRangeFinder == NULL || pScan == NULL || pLaserRangeFinder->Validate(pScan) == false) {
+      std::cout << "Invalid scan or laser range finder." << std::endl;
       return false;
     }
 
     if (m_Initialized == false) {
+      std::cout << "Initializing mapper with range threshold: " << pLaserRangeFinder->GetRangeThreshold() << std::endl;
       // initialize mapper with range threshold from device
       Initialize(pLaserRangeFinder->GetRangeThreshold());
     }
@@ -2696,12 +2731,25 @@ kt_bool Mapper::Process(LocalizedRangeScan * pScan, Matrix3 * covariance)
 
     // update scans corrected pose based on last correction
     if (pLastScan != NULL) {
+
+      std::cout << "Last scan: Odometric Pose: X: " << pLastScan->GetOdometricPose().GetX()
+                << ", Y: " << pLastScan->GetOdometricPose().GetY()
+                << ", Heading: " << pLastScan->GetOdometricPose().GetHeading()
+                << ", Corrected Pose: X: " << pLastScan->GetCorrectedPose().GetX()
+                << ", Y: " << pLastScan->GetCorrectedPose().GetY()
+                << ", Heading: " << pLastScan->GetCorrectedPose().GetHeading() << std::endl;
+    
       Transform lastTransform(pLastScan->GetOdometricPose(), pLastScan->GetCorrectedPose());
-      pScan->SetCorrectedPose(lastTransform.TransformPose(pScan->GetOdometricPose()));
+      Pose2 updatedPose = lastTransform.TransformPose(pScan->GetOdometricPose());
+      pScan->SetCorrectedPose(updatedPose);
+      std::cout << "Updated corrected pose: X: " << updatedPose.GetX()
+                << ", Y: " << updatedPose.GetY()
+                << ", Heading: " << updatedPose.GetHeading() << std::endl;    
     }
 
     // test if scan is outside minimum boundary or if heading is larger then minimum heading
     if (!HasMovedEnough(pScan, pLastScan)) {
+      std::cout << "Scan has not moved enough." << std::endl;
       return false;
     }
 
@@ -2711,11 +2759,15 @@ kt_bool Mapper::Process(LocalizedRangeScan * pScan, Matrix3 * covariance)
     // correct scan (if not first scan)
     if (m_pUseScanMatching->GetValue() && pLastScan != NULL) {
       Pose2 bestPose;
+      // RCLCPP_INFO(get_logger(), "Performing scan matching.");
       m_pSequentialScanMatcher->MatchScan(pScan,
         m_pMapperSensorManager->GetRunningScans(pScan->GetSensorName()),
         bestPose,
         cov);
       pScan->SetSensorPose(bestPose);
+      std::cout << "Best pose after scan matching: X: " << bestPose.GetX()
+                << ", Y: " << bestPose.GetY()
+                << ", Heading: " << bestPose.GetHeading() << std::endl;      
       if (covariance) {
         *covariance = cov;
       }
@@ -2723,15 +2775,18 @@ kt_bool Mapper::Process(LocalizedRangeScan * pScan, Matrix3 * covariance)
 
     // add scan to buffer and assign id
     m_pMapperSensorManager->AddScan(pScan);
+    // RCLCPP_INFO(get_logger(), "Scan added to buffer and assigned ID.");
 
     if (m_pUseScanMatching->GetValue()) {
       // add to graph
+      std::cout << "Adding scan to graph." << std::endl;
       m_pGraph->AddVertex(pScan);
       m_pGraph->AddEdges(pScan, cov);
 
       m_pMapperSensorManager->AddRunningScan(pScan);
 
       if (m_pDoLoopClosing->GetValue()) {
+        std::cout << "Attempting loop closure." << std::endl;
         std::vector<Name> deviceNames = m_pMapperSensorManager->GetSensorNames();
         const_forEach(std::vector<Name>, &deviceNames)
         {
@@ -2741,6 +2796,7 @@ kt_bool Mapper::Process(LocalizedRangeScan * pScan, Matrix3 * covariance)
     }
 
     m_pMapperSensorManager->SetLastScan(pScan);
+    // RCLCPP_INFO(get_logger(), "Set last scan.");
 
     return true;
   }

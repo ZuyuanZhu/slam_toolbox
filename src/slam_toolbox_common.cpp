@@ -237,7 +237,7 @@ void SlamToolbox::setROSInterfaces()
 }
 
 /*****************************************************************************/
-void SlamToolbox::publishTransformLoop(
+void SlamToolbox::publishTransformLoop(         // debug
   const double & transform_publish_period)
 /*****************************************************************************/
 {
@@ -411,13 +411,16 @@ bool SlamToolbox::updateMap()
 }
 
 /*****************************************************************************/
-tf2::Stamped<tf2::Transform> SlamToolbox::setTransformFromPoses(
+tf2::Stamped<tf2::Transform> SlamToolbox::setTransformFromPoses(        //debug
   const Pose2 & corrected_pose,
   const Pose2 & odom_pose,
   const rclcpp::Time & t,
   const bool & update_reprocessing_transform)
 /*****************************************************************************/
 {
+  // RCLCPP_INFO(get_logger(), "Corrected Pose: X: %f, Y: %f, Heading: %f", corrected_pose.GetX(), corrected_pose.GetY(), corrected_pose.GetHeading());
+  // RCLCPP_INFO(get_logger(), "Odometric Pose: X: %f, Y: %f, Heading: %f", odom_pose.GetX(), odom_pose.GetY(), odom_pose.GetHeading());
+
   // Compute the map->odom transform
   tf2::Stamped<tf2::Transform> odom_to_map;
   tf2::Quaternion q(0., 0., 0., 1.0);
@@ -438,8 +441,17 @@ tf2::Stamped<tf2::Transform> SlamToolbox::setTransformFromPoses(
     base_to_map_msg.transform.translation.z = base_to_map.getOrigin().getZ();
     base_to_map_msg.transform.rotation = tf2::toMsg(base_to_map.getRotation());
 
+    // RCLCPP_INFO(get_logger(), "Base to Map Transform: Origin: [%f, %f, %f], Rotation: [%f, %f, %f, %f]",
+    //     base_to_map.getOrigin().getX(), base_to_map.getOrigin().getY(), base_to_map.getOrigin().getZ(),
+    //     base_to_map.getRotation().x(), base_to_map.getRotation().y(), base_to_map.getRotation().z(), base_to_map.getRotation().w());
+
     odom_to_map_msg = tf_->transform(base_to_map_msg, odom_frame_);
     tf2::fromMsg(odom_to_map_msg, odom_to_map);
+
+    // RCLCPP_INFO(get_logger(), "Odom to Map Transform: Origin: [%f, %f, %f], Rotation: [%f, %f, %f, %f]",
+    //     odom_to_map.getOrigin().getX(), odom_to_map.getOrigin().getY(), odom_to_map.getOrigin().getZ(),
+    //     odom_to_map.getRotation().x(), odom_to_map.getRotation().y(), odom_to_map.getRotation().z(), odom_to_map.getRotation().w());
+
   } catch (tf2::TransformException & e) {
     RCLCPP_ERROR(get_logger(), "Transform from base_link to odom failed: %s",
       e.what());
@@ -458,12 +470,21 @@ tf2::Stamped<tf2::Transform> SlamToolbox::setTransformFromPoses(
     tf2::Transform odom_to_base_current = smapper_->toTfPose(odom_pose);
     reprocessing_transform_ =
       odom_to_base_serialized * odom_to_base_current.inverse();
+
+    // RCLCPP_INFO(get_logger(), "Reprocessing Transform: Origin: [%f, %f, %f], Rotation: [%f, %f, %f, %f]",
+    // reprocessing_transform_.getOrigin().getX(), reprocessing_transform_.getOrigin().getY(), reprocessing_transform_.getOrigin().getZ(),
+    // reprocessing_transform_.getRotation().x(), reprocessing_transform_.getRotation().y(), reprocessing_transform_.getRotation().z(), reprocessing_transform_.getRotation().w());
+
   }
 
   // set map to odom for our transformation thread to publish
   boost::mutex::scoped_lock lock(map_to_odom_mutex_);
   map_to_odom_ = tf2::Transform(tf2::Quaternion(odom_to_map.getRotation() ),
       tf2::Vector3(odom_to_map.getOrigin() ) ).inverse();
+
+  // RCLCPP_INFO(get_logger(), "Map to Odom Transform: Origin: [%f, %f, %f], Rotation: [%f, %f, %f, %f]",
+  //   map_to_odom_.getOrigin().getX(), map_to_odom_.getOrigin().getY(), map_to_odom_.getOrigin().getZ(),
+  //   map_to_odom_.getRotation().x(), map_to_odom_.getRotation().y(), map_to_odom_.getRotation().z(), map_to_odom_.getRotation().w());
 
   return odom_to_map;
 }
@@ -558,9 +579,20 @@ LocalizedRangeScan * SlamToolbox::addScan(
   Pose2 & odom_pose)
 /*****************************************************************************/
 {
+
+    // Log the initial odometric pose
+  // RCLCPP_INFO(get_logger(), "Initial Odometric Pose: X: %f, Y: %f, Heading: %f", 
+  //              odom_pose.GetX(), odom_pose.GetY(), odom_pose.GetHeading());
+
   // get our localized range scan
   LocalizedRangeScan * range_scan = getLocalizedRangeScan(
     laser, scan, odom_pose);
+
+
+  // // Log the localized range scan pose   // same as Initial Odometric Pose
+  // RCLCPP_INFO(get_logger(), "Localized Range Scan Odometric Pose: X: %f, Y: %f, Heading: %f", 
+  //              range_scan->GetOdometricPose().GetX(), range_scan->GetOdometricPose().GetY(), range_scan->GetOdometricPose().GetHeading());
+
 
   // Add the localized range scan to the smapper
   boost::mutex::scoped_lock lock(smapper_mutex_);
@@ -570,12 +602,15 @@ LocalizedRangeScan * SlamToolbox::addScan(
   covariance.SetToIdentity();
 
   if (processor_type_ == PROCESS) {
+    // RCLCPP_INFO(get_logger(), "Processing with PROCESS type.");    // used type
     processed = smapper_->getMapper()->Process(range_scan, &covariance);
   } else if (processor_type_ == PROCESS_FIRST_NODE) {
+    // RCLCPP_INFO(get_logger(), "Processing with PROCESS_FIRST_NODE type.");
     processed = smapper_->getMapper()->ProcessAtDock(range_scan, &covariance);
     processor_type_ = PROCESS;
     update_reprocessing_transform = true;
   } else if (processor_type_ == PROCESS_NEAR_REGION) {
+    // RCLCPP_INFO(get_logger(), "Processing with PROCESS_NEAR_REGION type.");
     boost::mutex::scoped_lock l(pose_mutex_);
     if (!process_near_pose_) {
       RCLCPP_ERROR(get_logger(), "Process near region called without a "
@@ -598,16 +633,35 @@ LocalizedRangeScan * SlamToolbox::addScan(
   // if successfully processed, create odom to map transformation
   // and add our scan to storage
   if (processed) {
+    // RCLCPP_INFO(get_logger(), "Scan processed successfully.");
     if (enable_interactive_mode_) {
       scan_holder_->addScan(*scan);
     }
 
+    // Log the corrected pose before transformation   // jump
+    RCLCPP_INFO(get_logger(), "Corrected Pose before setTransformFromPoses: X: %f, Y: %f, Heading: %f", 
+                 range_scan->GetCorrectedPose().GetX(), range_scan->GetCorrectedPose().GetY(), range_scan->GetCorrectedPose().GetHeading());
+
+    // Log the odometric pose before transformation   // valid
+    RCLCPP_INFO(get_logger(), "Odometric Pose before setTransformFromPoses: X: %f, Y: %f, Heading: %f", 
+                 odom_pose.GetX(), odom_pose.GetY(), odom_pose.GetHeading());
+
+    // Log the timestamp
+    // RCLCPP_INFO(get_logger(), "Timestamp: %f", scan->header.stamp.sec + scan->header.stamp.nanosec / 1e9);
+
     setTransformFromPoses(range_scan->GetCorrectedPose(), odom_pose,
       scan->header.stamp, update_reprocessing_transform);
+
+
+        // Log the corrected pose after transformation   // same as before
+    // RCLCPP_INFO(get_logger(), "Corrected Pose after setTransformFromPoses: X: %f, Y: %f, Heading: %f", 
+    //              range_scan->GetCorrectedPose().GetX(), range_scan->GetCorrectedPose().GetY(), range_scan->GetCorrectedPose().GetHeading());
+
     dataset_->Add(range_scan);
 
     publishPose(range_scan->GetCorrectedPose(), covariance, scan->header.stamp);
   } else {
+    // RCLCPP_WARN(get_logger(), "Scan processing failed.");
     delete range_scan;
     range_scan = nullptr;
   }
